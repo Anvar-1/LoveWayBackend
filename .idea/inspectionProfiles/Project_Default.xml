@@ -1,0 +1,77 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="INFORMATION" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="anyio" />
+          <option value="CacheControl" />
+          <option value="certifi" />
+          <option value="cffi" />
+          <option value="charset-normalizer" />
+          <option value="cryptography" />
+          <option value="django-email-users" />
+          <option value="django-phonenumber-field" />
+          <option value="django-posts" />
+          <option value="django-push-notifications" />
+          <option value="django-redis" />
+          <option value="django-stubs" />
+          <option value="django-stubs-ext" />
+          <option value="djangorestframework" />
+          <option value="djangorestframework-stubs" />
+          <option value="djangorestframework_simplejwt" />
+          <option value="firebase_admin" />
+          <option value="google-api-core" />
+          <option value="google-auth" />
+          <option value="google-cloud-core" />
+          <option value="google-cloud-firestore" />
+          <option value="google-cloud-storage" />
+          <option value="google-crc32c" />
+          <option value="google-resumable-media" />
+          <option value="googleapis-common-protos" />
+          <option value="grpcio" />
+          <option value="grpcio-status" />
+          <option value="h11" />
+          <option value="h2" />
+          <option value="hpack" />
+          <option value="httpcore" />
+          <option value="httpx" />
+          <option value="hyperframe" />
+          <option value="idna" />
+          <option value="msgpack" />
+          <option value="phonenumbers" />
+          <option value="proto-plus" />
+          <option value="protobuf" />
+          <option value="psycopg2-binary" />
+          <option value="pyasn1" />
+          <option value="pyasn1_modules" />
+          <option value="pycparser" />
+          <option value="PyJWT" />
+          <option value="python-redis-cache" />
+          <option value="redis" />
+          <option value="requests" />
+          <option value="rsa" />
+          <option value="types-PyYAML" />
+          <option value="types-requests" />
+          <option value="typing_extensions" />
+          <option value="urllib3" />
+          <option value="utils" />
+          <option value="asgiref" />
+          <option value="async-timeout" />
+          <option value="Deprecated" />
+          <option value="Django" />
+          <option value="django-cors-headers" />
+          <option value="drf-spectacular" />
+          <option value="inflection" />
+          <option value="jsonschema-specifications" />
+          <option value="python-decouple" />
+          <option value="referencing" />
+          <option value="rpds-py" />
+          <option value="sqlparse" />
+          <option value="uritemplate" />
+          <option value="wrapt" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
