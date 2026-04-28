@@ -58,6 +58,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
 
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -254,6 +255,3 @@ OPENAI_MODERATION_MODEL = config(
 )
 
 # Debug uchun vaqtincha tekshiruv
-
-print("OPENAI_API_KEY loaded:", bool(OPENAI_API_KEY))
-print("OPENAI_API_KEY preview:", OPENAI_API_KEY[:12] if OPENAI_API_KEY else None)
