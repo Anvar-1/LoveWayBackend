@@ -1,5 +1,6 @@
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from .services import should_broadcast_stats
 from .services import (add_live_comment, get_live_stats, heartbeat_viewer, join_live, leave_live, toggle_like_live,)
 
 
@@ -17,11 +18,12 @@ class LiveConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4001)
             return
 
-        joined = await database_sync_to_async(join_live)(self.live_id, self.user.id)
+        joined, err_msg = await database_sync_to_async(join_live)(self.live_id, self.user.id)
         if not joined:
-            await self._send_error("Live topilmadi yoki tugagan.")
+            await self._send_error(err_msg or "Live topilmadi yoki tugagan.")
             await self.close(code=4004)
             return
+
 
         self.joined = True
 
@@ -240,3 +242,27 @@ class LiveFeedConsumer(AsyncJsonWebsocketConsumer):
             "type": "live_ended",
             "data": event["payload"],
         })
+
+    async def _broadcast_stats(self):
+
+        allowed = await database_sync_to_async(
+            should_broadcast_stats
+        )(self.live_id)
+
+        if not allowed:
+            return
+
+        stats = await database_sync_to_async(
+            get_live_stats
+        )(self.live_id)
+
+        if not stats:
+            return
+
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "live.stats",
+                "stats": stats,
+            },
+        )

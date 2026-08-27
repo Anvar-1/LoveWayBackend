@@ -21,6 +21,7 @@ urlpatterns = [
     path("stories/", include("config.stories.urls")),
     path("live/", include("config.livestream.urls")),
     path("api/ai/", include("config.ai.urls")),
+    path("chat/", include("config.chat.urls")),
 ]
 
 if settings.DEBUG:

@@ -165,6 +165,50 @@ def get_user_stories(user_id: int) -> list[dict]:
     return result
 
 
+def delete_story(story_id: str, user) -> dict:
+    story = story_meta_redis.hgetall(_story_key(story_id))
+
+    if not story:
+        return {"ok": False, "detail": "Story not found"}
+
+    # Story egasi yoki admin o'chira oladi
+    if int(story["user_id"]) != user.id and not (user.is_staff or user.is_superuser):
+        return {"ok": False, "detail": "Permission denied"}
+
+    comment_ids = story_meta_redis.zrange(_story_comments_key(story_id), 0, -1)
+
+    pipe_meta = story_meta_redis.pipeline()
+    pipe_media = story_media_redis.pipeline()
+
+    pipe_meta.delete(
+        _story_key(story_id),
+        _story_views_key(story_id),
+        _story_likes_key(story_id),
+        _story_comments_key(story_id),
+    )
+
+    for comment_id in comment_ids:
+        pipe_meta.delete(_story_comment_key(story_id, comment_id))
+
+    # Story egasining ro'yxatidan o'chirish
+    pipe_meta.zrem(_user_stories_key(story["user_id"]), story_id)
+
+    # Active storylardan o'chirish
+    pipe_meta.zrem(ACTIVE_STORIES_KEY, story_id)
+
+    # Media faylini o'chirish
+    pipe_media.delete(_story_media_key(story_id))
+
+    pipe_meta.execute()
+    pipe_media.execute()
+
+    return {
+        "ok": True,
+        "detail": "Story deleted successfully"
+    }
+
+
+
 def add_view(story_id: str, viewer_id: int):
     story = story_meta_redis.hgetall(_story_key(story_id))
     if not story:

@@ -1,4 +1,5 @@
 from django.db.models import Q, Case, When, Value, IntegerField
+from django.core.cache import cache
 from config.user.models import User
 from config.profiles.models import Profile
 from .models import Interest, UserInterest, SearchHistory
@@ -6,208 +7,133 @@ from .models import Interest, UserInterest, SearchHistory
 
 class InterestService:
     @staticmethod
-    def save_search(user, query, ip_address=None):
-        return SearchHistory.objects.create(
-            user=user,
-            query=query,
-            ip_address=ip_address,
-        )
-
-    @staticmethod
     def add_interest(user, interest_name, score=1):
+        """Qiziqishni qo'shish, ballni yangilash va keshni tozalash"""
         interest_name = interest_name.strip().lower()
-        if not interest_name:
+        if not interest_name or len(interest_name) < 2:
             return None
 
         interest, _ = Interest.objects.get_or_create(name=interest_name)
-
         user_interest, created = UserInterest.objects.get_or_create(
-            user=user,
-            interest=interest,
-            defaults={"score": score},
+            user=user, interest=interest,
+            defaults={"score": score}
         )
 
         if not created:
             user_interest.score += score
             user_interest.save(update_fields=["score", "updated_at"])
 
+        # Foydalanuvchi qiziqishi o'zgargani uchun keshni o'chiramiz
+        cache.delete(f"search_suggest_{user.id}")
         return user_interest
 
     @staticmethod
-    def process_search(user, query, ip_address=None):
+    def process_search_query(user, query, ip_address=None):
+        """Qidiruvni tarixga saqlash va so'zlarni tahlil qilib ballash"""
         query = query.strip()
         if not query:
             return
 
-        # search history ga yoziladi
-        InterestService.save_search(user, query, ip_address=ip_address)
+        # 1. Tarixga saqlash
+        SearchHistory.objects.create(user=user, query=query, ip_address=ip_address)
 
-        # query bo‘linadi va har biri interest sifatida qo‘shiladi
-        parts = [part.strip().lower() for part in query.split() if part.strip()]
+        # 2. So'zlarga bo'lib ball berish (3 harfdan uzun so'zlar)
+        parts = [p.strip().lower() for p in query.split() if len(p.strip()) > 2]
         for part in parts:
             InterestService.add_interest(user, part, score=1)
 
     @staticmethod
-    def find_related_profiles(query, current_user=None, limit=10):
-        query = query.strip().lower()
-        if not query:
-            return Profile.objects.none()
+    def boost_interest_on_click(user, profile_owner):
+        """Profilga kirganda (click) ballni keskin oshirish"""
+        if not hasattr(profile_owner, 'profile'):
+            return
 
-        qs = (
-            Profile.objects
-            .select_related("user")
-            .filter(
-                Q(username__icontains=query) |
-                Q(full_name__icontains=query) |
-                Q(bio__icontains=query) |
-                Q(city__icontains=query) |
-                Q(country__icontains=query)
-            )
-            .annotate(
-                score=Case(
-                    When(username__iexact=query, then=Value(100)),
-                    When(full_name__iexact=query, then=Value(95)),
-                    When(username__istartswith=query, then=Value(85)),
-                    When(full_name__istartswith=query, then=Value(80)),
-                    When(username__icontains=query, then=Value(70)),
-                    When(full_name__icontains=query, then=Value(65)),
-                    When(bio__icontains=query, then=Value(50)),
-                    When(city__icontains=query, then=Value(45)),
-                    When(country__icontains=query, then=Value(40)),
-                    default=Value(0),
-                    output_field=IntegerField(),
-                )
-            )
-            .order_by("-score", "-id")
-        )
+        words = []
+        if profile_owner.profile.full_name:
+            words.extend(profile_owner.profile.full_name.split())
+        if profile_owner.profile.username:
+            words.append(profile_owner.profile.username)
 
-        if current_user:
-            qs = qs.exclude(user=current_user)
-
-        return qs[:limit]
-
+        for word in words:
+            if len(word) > 2:
+                InterestService.add_interest(user, word, score=5)
 
 
 class UserSearchService:
     @staticmethod
     def search(user, query: str):
+        """Aniq qidiruv mantiqi (Relevance bo'yicha)"""
         query = query.strip()
         if not query:
             return User.objects.none()
 
-        parts = [part.strip() for part in query.split() if part.strip()]
+        parts = [p.strip() for p in query.split() if p.strip()]
 
+        # Filtirlash: hamma so'zlar ishtirok etishi shart (&)
         filters = Q()
         for part in parts:
-            filters &= (
-                Q(profile__username__icontains=part) |
-                Q(profile__full_name__icontains=part)
+            filters &= (Q(profile__username__icontains=part) | Q(profile__full_name__icontains=part))
+
+        return User.objects.select_related("profile").filter(filters).exclude(id=user.id).annotate(
+            relevance=Case(
+                When(profile__username__iexact=query, then=Value(100)),
+                When(profile__full_name__iexact=query, then=Value(95)),
+                When(profile__username__istartswith=query, then=Value(85)),
+                default=Value(50),
+                output_field=IntegerField(),
             )
-
-        users = (
-            User.objects
-            .select_related("profile")
-            .filter(filters)
-            .exclude(id=user.id)
-            .annotate(
-                score=Case(
-                    When(profile__username__iexact=query, then=Value(100)),
-                    When(profile__full_name__iexact=query, then=Value(95)),
-                    When(profile__username__istartswith=query, then=Value(85)),
-                    When(profile__full_name__istartswith=query, then=Value(80)),
-                    When(profile__username__icontains=query, then=Value(70)),
-                    When(profile__full_name__icontains=query, then=Value(65)),
-                    default=Value(50),
-                    output_field=IntegerField(),
-                )
-            )
-            .order_by("-score", "-id")
-            .distinct()[:20]
-        )
-
-        return users
-
-    @staticmethod
-    def save_history(user, query, ip):
-        query = query.strip()
-        if not query:
-            return None
-
-        return SearchHistory.objects.create(
-            user=user,
-            query=query,
-            ip_address=ip,
-        )
+        ).order_by("-relevance", "-id").distinct()[:20]
 
     @staticmethod
     def suggest(user):
-        # 1) avval userning eng kuchli interestlarini olamiz
-        interests = (
-            UserInterest.objects
-            .filter(user=user)
+        """Redis keshga asoslangan shaxsiy tavsiyalar mantiqi"""
+        cache_key = f"search_suggest_{user.id}"
+        cached_users = cache.get(cache_key)
+
+        if cached_users is not None:
+            return cached_users
+
+        # 1. Foydalanuvchining eng kuchli qiziqishlarini bazadan olamiz
+        top_interests = (
+            UserInterest.objects.filter(user=user)
             .select_related("interest")
-            .order_by("-score", "-updated_at")[:5]
+            .order_by("-score")[:10]
         )
 
-        interest_names = [item.interest.name for item in interests if item.interest.name]
+        if not top_interests:
+            # Fallback: Agar qiziqish bo'lmasa, eng yangi foydalanuvchilar
+            users = list(User.objects.select_related("profile").exclude(id=user.id).order_by("-id")[:20])
+        else:
+            filters = Q()
+            when_clauses = []
 
-        # 2) agar interest bo'lmasa, recent query larni olamiz
-        if not interest_names:
-            recent_queries = list(
-                SearchHistory.objects
-                .filter(user=user)
-                .order_by("-created_at")
-                .values_list("query", flat=True)[:5]
-            )
+            for ui in top_interests:
+                name = ui.interest.name
+                weight = ui.score
 
-            for q in recent_queries:
-                interest_names.extend([part.strip().lower() for part in q.split() if part.strip()])
+                filters |= Q(profile__username__icontains=name)
+                filters |= Q(profile__full_name__icontains=name)
+                filters |= Q(profile__bio__icontains=name)
 
-        # duplicate olib tashlaymiz
-        interest_names = list(dict.fromkeys(interest_names))
+                # Dinamik vazn: bazadagi score qancha baland bo'lsa, tavsiya shuncha yuqorida chiqadi
+                when_clauses.append(When(profile__username__icontains=name, then=Value(weight * 2)))
+                when_clauses.append(When(profile__full_name__icontains=name, then=Value(weight)))
 
-        # 3) hali ham hech narsa bo‘lmasa fallback
-        if not interest_names:
-            return (
-                User.objects
-                .select_related("profile")
+            users = list(
+                User.objects.select_related("profile")
+                .filter(filters)
                 .exclude(id=user.id)
-                .order_by("-id")[:20]
-            )
-
-        filters = Q()
-        for name in interest_names:
-            filters |= Q(profile__username__icontains=name)
-            filters |= Q(profile__full_name__icontains=name)
-            filters |= Q(profile__bio__icontains=name)
-            filters |= Q(profile__city__icontains=name)
-            filters |= Q(profile__country__icontains=name)
-
-        users = (
-            User.objects
-            .select_related("profile")
-            .filter(filters)
-            .exclude(id=user.id)
-            .annotate(
-                score=Case(
-                    *[
-                        When(profile__username__icontains=name, then=Value(90 - i * 5))
-                        for i, name in enumerate(interest_names[:5])
-                    ],
-                    *[
-                        When(profile__full_name__icontains=name, then=Value(85 - i * 5))
-                        for i, name in enumerate(interest_names[:5])
-                    ],
-                    *[
-                        When(profile__bio__icontains=name, then=Value(70 - i * 5))
-                        for i, name in enumerate(interest_names[:5])
-                    ],
-                    default=Value(10),
-                    output_field=IntegerField(),
+                .annotate(
+                    relevance=Case(
+                        *when_clauses,
+                        default=Value(1),
+                        output_field=IntegerField()
+                    )
                 )
+                .order_by("-relevance", "-id")
+                .distinct()[:20]
             )
-            .order_by("-score", "-id")
-            .distinct()[:20]
-        )
 
+        # Natijani 15 daqiqaga keshga saqlaymiz
+        cache.set(cache_key, users, timeout=900)
         return users

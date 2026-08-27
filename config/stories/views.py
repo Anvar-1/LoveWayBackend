@@ -2,7 +2,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from .services import (create_story, get_story, get_user_stories, add_view, toggle_like, add_comment,
+from .services import get_story_viewers_with_profiles
+from .services import (create_story, get_story, get_user_stories, delete_story, add_view, toggle_like, add_comment,
                        get_story_comments, get_story_viewers,)
 
 
@@ -35,6 +36,20 @@ class UserStoriesAPIView(APIView):
     def get(self, request, user_id):
         stories = get_user_stories(user_id)
         return Response(stories, status=200)
+
+
+class StoryDeleteAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, story_id):
+        result = delete_story(story_id, request.user)
+
+        if not result["ok"]:
+            if result["detail"] == "Permission denied":
+                return Response(result, status=403)
+            return Response(result, status=404)
+
+        return Response(result, status=200)
 
 
 class StoryDetailAPIView(APIView):
@@ -85,8 +100,12 @@ class StoryCommentAPIView(APIView):
         return Response(get_story_comments(story_id), status=200)
 
 
+
 class StoryViewersAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, story_id):
-        return Response(get_story_viewers(story_id), status=200)
+        return Response(
+            get_story_viewers_with_profiles(story_id),
+            status=200,
+        )

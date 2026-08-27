@@ -24,7 +24,7 @@ class Profile(models.Model):
     )
 
     full_name = models.CharField(max_length=255, blank=True)
-    username = models.CharField(max_length=50, unique=True, null=True, blank=True)
+    username = models.CharField(max_length=50, null=True, blank=True)
     birth_date = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES, blank=True)
 

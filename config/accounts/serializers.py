@@ -22,9 +22,7 @@ class RegisterSerializer(serializers.Serializer):
         return validate_strong_password(value)
 
     def validate_username(self, value):
-        if Profile.objects.filter(username=value).exists():
-            raise serializers.ValidationError("This username is already taken.")
-        return value
+        return value.strip() if value else value
 
     def validate_email(self, value):
         if value and User.objects.filter(email=value).exists():

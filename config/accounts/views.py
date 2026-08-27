@@ -1,5 +1,4 @@
 from random import randint
-
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
@@ -17,6 +16,8 @@ from config.common.security import (
     increment_rate,
     block_key,
     enforce_block,
+    track_ip_distinct_phones,
+    track_failed_login,
     set_otp,
     get_otp,
     delete_otp,
@@ -95,8 +96,30 @@ class LoginAPIView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        ip = get_client_ip(request)
+        phone = request.data.get("phone")
+
+        enforce_block(request, phone=phone)
+
+        if phone and track_ip_distinct_phones(ip, phone):
+            create_audit_log(
+                action="spam_login_blocked",
+                ip_address=ip,
+                user_agent=request.META.get("HTTP_USER_AGENT", ""),
+                metadata={"phone": phone, "reason": "too_many_different_phones_from_same_ip"},
+            )
+            return Response(
+                {"detail": "Too many login attempts with different phone numbers from this IP address."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
         serializer = LoginSerializer(data=request.data, context={"request": request})
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception as exc:
+            track_failed_login(ip, phone)
+            raise exc
+
         user = serializer.validated_data["user"]
 
         cache_user_session(user)
@@ -104,7 +127,7 @@ class LoginAPIView(APIView):
         create_audit_log(
             user=user,
             action="login_success",
-            ip_address=get_client_ip(request),
+            ip_address=ip,
             user_agent=request.META.get("HTTP_USER_AGENT", ""),
             metadata={"phone": user.phone},
         )
@@ -160,6 +183,12 @@ class SendOTPAPIView(APIView):
             )
 
         enforce_block(request, phone=phone)
+
+        if track_ip_distinct_phones(ip, phone):
+            return Response(
+                {"detail": "Too many OTP requests for different phone numbers from this IP address."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
 
         exceeded_ip, _ = increment_rate(f"otp:ip:{ip}", limit=5, ttl=600)
         exceeded_phone, _ = increment_rate(f"otp:phone:{phone}", limit=3, ttl=600)

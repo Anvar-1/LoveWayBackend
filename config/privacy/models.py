@@ -27,3 +27,29 @@ class PrivacyPolicyAcceptance(models.Model):
 
     def __str__(self):
         return f"{self.user} accepted {self.policy.version}"
+
+
+class UserBlock(models.Model):
+    user = models.ForeignKey(
+        "user.User",
+        on_delete=models.CASCADE,
+        related_name="blocked_users",
+    )
+    blocked_user = models.ForeignKey(
+        "user.User",
+        on_delete=models.CASCADE,
+        related_name="blocked_by_users",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "blocked_user"],
+                name="unique_user_block",
+            )
+        ]
+
+    def __str__(self):
+        return f"User {self.user_id} blocked User {self.blocked_user_id}"

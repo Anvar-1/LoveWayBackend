@@ -1,74 +1,48 @@
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
 from config.common.utils import get_client_ip
-from config.profiles.serializers import ProfileSerializer
-from .serializers import SearchSerializer
+from .models import Interest
 from .services import UserSearchService, InterestService
-from .serializers import UserSearchResultSerializer
-
-
-class InterestSearchAPIView(APIView):
-    def post(self, request):
-        serializer = SearchSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        query = serializer.validated_data["query"]
-        ip = get_client_ip(request)
-
-        InterestService.process_search(
-            user=request.user,
-            query=query,
-            ip_address=ip,
-        )
-
-        profiles = InterestService.find_related_profiles(
-            query=query,
-            current_user=request.user,
-        )
-
-        return Response(
-            {
-                "query": query,
-                "count": profiles.count() if hasattr(profiles, "count") else len(profiles),
-                "results": ProfileSerializer(
-                    profiles,
-                    many=True,
-                    context={"request": request}
-                ).data,
-            },
-            status=status.HTTP_200_OK,
-        )
-
+from .serializers import UserSearchResultSerializer, InterestModelSerializer
+from ..user.models import User
 
 
 class UserSearchAPIView(APIView):
+    """Foydalanuvchilarni qidirish va ularning qiziqishlarini ham qaytarish"""
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        query = request.query_params.get("q", "").strip()
-        ip = get_client_ip(request)
+        query = request.query_params.get('q', '')
+        # Qidiruv tarixini saqlash va ballash
+        InterestService.process_search_query(request.user, query)
 
-        if query:
-            if len(query) < 2:
-                return Response([])
+        # Foydalanuvchilarni qidirish
+        users = UserSearchService.search(request.user, query)
 
-            users = UserSearchService.search(
-                user=request.user,
-                query=query,
-            )
-
-            # history + interest ni bir joyda yangilaymiz
-            InterestService.process_search(
-                user=request.user,
-                query=query,
-                ip_address=ip,
-            )
-
-        else:
-            users = UserSearchService.suggest(request.user)
-
-        serializer = UserSearchResultSerializer(
-            users,
-            many=True,
-            context={"request": request},
-        )
+        # Serializer orqali qiziqishlari bilan birga qaytarish
+        serializer = UserSearchResultSerializer(users, many=True)
         return Response(serializer.data)
+
+
+class InterestSearchAPIView(APIView):
+    """Foydalanuvchi qiziqish qo'shayotganda tizimdagi bor qiziqishlarni qidirishi uchun"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        query = request.query_params.get('q', '').strip()
+        interests = Interest.objects.filter(name__icontains=query)[:10]
+        serializer = InterestModelSerializer(interests, many=True)
+        return Response(serializer.data)
+
+class ProfileDetailAPIView(APIView):
+    """Foydalanuvchi profiliga kirganda ballni oshirish uchun namuna"""
+
+    def get(self, request, pk):
+        profile_user = User.objects.get(pk=pk)
+
+        # Click ballini oshirish (Redis kesh avtomatik o'chadi)
+        InterestService.boost_interest_on_click(request.user, profile_user)
+
+        # ... qolgan mantiq (profil ma'lumotlarini qaytarish) ...
+        return Response({"status": "ok"})

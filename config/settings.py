@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "config.ai",
     "config.stories",
     "config.livestream",
+    "config.chat",
 ]
 
 
@@ -183,14 +184,32 @@ CACHES = {
 }
 
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [redis_url(REDIS_CHANNEL_DB)],
+try:
+    import redis
+    r = redis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        db=REDIS_CHANNEL_DB,
+        password=REDIS_PASSWORD or None,
+        socket_timeout=1
+    )
+    r.ping()
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [redis_url(REDIS_CHANNEL_DB)],
+            },
         },
-    },
-}
+    }
+except Exception:
+    print("WARNING: Redis not reachable. Falling back to InMemoryChannelLayer for Channels.")
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer"
+        }
+    }
+
 
 
 RATELIMIT_USE_CACHE = "default"
@@ -202,8 +221,14 @@ ADMIN_ALLOWED_IPS = ["127.0.0.1"]
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
+SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SAMESITE = "Lax"
+
+CSRF_COOKIE_HTTPONLY = True
 CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SAMESITE = "Lax"
+
 SECURE_SSL_REDIRECT = not DEBUG
 
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
@@ -222,10 +247,10 @@ PASSWORD_HASHERS = [
 
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=120),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
-    "ROTATE_REFRESH_TOKENS": False,
-    "BLACKLIST_AFTER_ROTATION": False,
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": False,
 
     "ALGORITHM": "HS256",

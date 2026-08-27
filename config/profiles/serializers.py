@@ -69,19 +69,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         return f"last seen {days} day(s) ago"
 
     def validate_username(self, value):
-        value = (value or "").strip().lower()
-
-        if not value:
-            return value
-
-        qs = Profile.objects.filter(username__iexact=value)
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.pk)
-
-        if qs.exists():
-            raise serializers.ValidationError("This username is already taken.")
-
-        return value
+        return (value or "").strip()
 
     def validate_email(self, value):
         value = (value or "").strip().lower()

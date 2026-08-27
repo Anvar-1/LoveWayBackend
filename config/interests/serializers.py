@@ -1,39 +1,28 @@
-from config.user.models import User
 from rest_framework import serializers
+from config.user.models import User
+from .models import Interest, UserInterest
 
+class InterestModelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Interest
+        fields = ['id', 'name']
 
-class SearchSerializer(serializers.Serializer):
-    query = serializers.CharField(max_length=255)
-
-
+class UserInterestDetailSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source='interest.name')
+    class Meta:
+        model = UserInterest
+        fields = ['name', 'score']
 
 class UserSearchResultSerializer(serializers.ModelSerializer):
-    username = serializers.CharField(source="profile.username", read_only=True)
-    full_name = serializers.CharField(source="profile.full_name", read_only=True)
-    bio = serializers.CharField(source="profile.bio", read_only=True)
-    city = serializers.CharField(source="profile.city", read_only=True)
-    country = serializers.CharField(source="profile.country", read_only=True)
-    avatar = serializers.SerializerMethodField()
+    full_name = serializers.CharField(source='profile.full_name')
+    username = serializers.CharField(source='profile.username')
+    # Foydalanuvchining o'z qiziqishlarini chiqarish
+    user_interests = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = [
-            "id",
-            "username",
-            "full_name",
-            "bio",
-            "city",
-            "country",
-            "avatar",
-        ]
+        fields = ['id', 'username', 'full_name', 'user_interests']
 
-    def get_avatar(self, obj):
-        request = self.context.get("request")
-        avatar = getattr(obj.profile, "avatar", None)
-
-        if avatar:
-            try:
-                return request.build_absolute_uri(avatar.url) if request else avatar.url
-            except Exception:
-                return None
-        return None
+    def get_user_interests(self, obj):
+        interests = UserInterest.objects.filter(user=obj).select_related('interest').order_by('-score')[:5]
+        return UserInterestDetailSerializer(interests, many=True).data

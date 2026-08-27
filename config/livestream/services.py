@@ -49,6 +49,11 @@ def _last_stats_broadcast_key(live_id: str) -> str:
     return f"live:{live_id}:last_stats_broadcast"
 
 
+def _active_livestreams_key() -> str:
+    return "active_livestreams"
+
+
+
 def get_accepted_friends_count(user_id: int) -> int:
     qs = Friendship.objects.filter(status="accepted").filter(
         Q(from_user_id=user_id) | Q(to_user_id=user_id)
@@ -64,20 +69,37 @@ def get_accepted_friends_count(user_id: int) -> int:
     return len(friend_ids)
 
 
+MIN_FRIENDS_REQUIRED_FOR_LIVE = 50
+
+
 def can_start_livestream(user_id: int) -> tuple[bool, str]:
     active_live_id = redis_client.get(_user_active_live_key(user_id))
     if active_live_id:
-        return False, "Sizda allaqachon aktiv live bor."
+        if isinstance(active_live_id, bytes):
+            active_live_id = active_live_id.decode()
+        end_live_session(active_live_id, user_id)
 
     friends_count = get_accepted_friends_count(user_id)
-    if friends_count < 50:
-        return False, "Livestream yoqish uchun kamida 50 ta do'st kerak."
+    if friends_count < MIN_FRIENDS_REQUIRED_FOR_LIVE:
+        return False, f"Efirga chiqish uchun kamida {MIN_FRIENDS_REQUIRED_FOR_LIVE} ta do'stingiz bo'lishi kerak."
 
     return True, ""
 
 
+
+
+
+
+
+
 def create_live_session(user_id: int, title: str = "") -> dict:
+
+    print("=== LIVE DEBUG ===")
+    print("USER ID:", user_id)
+    print("FRIENDS COUNT:", get_accepted_friends_count(user_id))
+
     can_start, detail = can_start_livestream(user_id)
+
     if not can_start:
         return {"ok": False, "detail": detail}
 
@@ -85,6 +107,16 @@ def create_live_session(user_id: int, title: str = "") -> dict:
     now = _now_ts()
     expires_at = now + LIVE_TTL_SECONDS
 
+# def create_live_session(user_id: int, title: str = "") -> dict:
+#     can_start, detail = can_start_livestream(user_id)
+#     if not can_start:
+#         return {"ok": False, "detail": detail}
+#
+#
+#     live_id = uuid.uuid4().hex
+#     now = _now_ts()
+#     expires_at = now + LIVE_TTL_SECONDS
+#
     live_key = _live_key(live_id)
     user_live_key = _user_active_live_key(user_id)
 
@@ -106,6 +138,8 @@ def create_live_session(user_id: int, title: str = "") -> dict:
 
     pipe.set(user_live_key, live_id)
     pipe.expireat(user_live_key, expires_at)
+
+    pipe.sadd(_active_livestreams_key(), live_id)
 
     pipe.expireat(live_key, expires_at)
     pipe.expireat(_live_viewers_key(live_id), expires_at)
@@ -136,16 +170,16 @@ def get_live_session(live_id: str) -> Optional[dict]:
     return data
 
 
-def join_live(live_id: str, user_id: int) -> bool:
+def join_live(live_id: str, user_id: int) -> tuple[bool, str]:
     live_data = redis_client.hgetall(_live_key(live_id))
     if not live_data or live_data.get("status") != "live":
-        return False
+        return False, "Live topilmadi yoki tugagan."
+
+    viewer_key = _live_viewers_key(live_id)
+    already_viewing = redis_client.zscore(viewer_key, str(user_id)) is not None
 
     now = _now_ts()
-    viewer_key = _live_viewers_key(live_id)
     last_seen_key = _viewer_last_seen_key(live_id, user_id)
-
-    already_viewing = redis_client.zscore(viewer_key, str(user_id)) is not None
 
     pipe = redis_client.pipeline()
     pipe.zadd(viewer_key, {str(user_id): now})
@@ -160,7 +194,9 @@ def join_live(live_id: str, user_id: int) -> bool:
         pipe.hincrby(_live_key(live_id), "views", 1)
 
     pipe.execute()
-    return True
+    return True, ""
+
+
 
 
 def heartbeat_viewer(live_id: str, user_id: int) -> bool:
@@ -322,21 +358,142 @@ def get_live_viewers_with_profiles(live_id: str) -> list[dict]:
     return result
 
 
+def _get_user_profiles_map(user_ids: list[int]) -> dict[int, dict]:
+    if not user_ids:
+        return {}
+
+    users = User.objects.filter(id__in=user_ids).select_related("profile")
+    user_map = {}
+    for user in users:
+        profile = getattr(user, "profile", None)
+        user_map[user.id] = {
+            "user_id": user.id,
+            "phone": user.phone,
+            "username": getattr(profile, "username", "") or f"user_{user.id}",
+            "full_name": getattr(profile, "full_name", "") or "",
+            "avatar": profile.avatar.url if profile and profile.avatar else None,
+        }
+    return user_map
+
+
+def get_active_livestreams() -> list[dict]:
+    active_ids = redis_client.smembers(_active_livestreams_key())
+    if not active_ids:
+        return []
+
+    stream_ids = []
+    for sid in active_ids:
+        if isinstance(sid, bytes):
+            sid = sid.decode()
+        stream_ids.append(sid)
+
+    stale_stream_ids = []
+    streams_data = []
+
+    for live_id in stream_ids:
+        session = redis_client.hgetall(_live_key(live_id))
+        if not session or session.get("status") != "live":
+            stale_stream_ids.append(live_id)
+            continue
+
+        _cleanup_stale_viewers(live_id)
+        session["viewers_count"] = redis_client.zcard(_live_viewers_key(live_id))
+        session["likes_count"] = redis_client.scard(_live_likes_key(live_id))
+        session["comments_count"] = redis_client.zcard(_live_comments_key(live_id))
+        streams_data.append(session)
+
+    if stale_stream_ids:
+        redis_client.srem(_active_livestreams_key(), *stale_stream_ids)
+
+    if not streams_data:
+        return []
+
+    all_user_ids = set()
+    for session in streams_data:
+        if session.get("host_user_id"):
+            all_user_ids.add(int(session["host_user_id"]))
+
+        raw_viewers = redis_client.zrevrange(_live_viewers_key(session["id"]), 0, -1, withscores=True)
+        session["_raw_viewers"] = raw_viewers
+        for uid, _ in raw_viewers:
+            all_user_ids.add(int(uid))
+
+    user_profiles_map = _get_user_profiles_map(list(all_user_ids))
+
+    result = []
+    for session in streams_data:
+        live_id = session["id"]
+        host_user_id = int(session.get("host_user_id", 0))
+        host_info = user_profiles_map.get(
+            host_user_id,
+            {
+                "user_id": host_user_id,
+                "phone": "",
+                "username": f"user_{host_user_id}",
+                "full_name": "",
+                "avatar": None,
+            },
+        )
+
+        viewers_list = []
+        for uid, score in session.get("_raw_viewers", []):
+            uid = int(uid)
+            v_info = user_profiles_map.get(uid)
+            if v_info:
+                v_item = dict(v_info)
+                v_item["viewed_at"] = int(score)
+                viewers_list.append(v_item)
+
+        result.append(
+            {
+                "live_id": live_id,
+                "title": session.get("title", ""),
+                "status": session.get("status", "live"),
+                "started_at": int(session.get("started_at", 0)),
+                "views": int(session.get("views", 0)),
+                "likes_count": int(session.get("likes_count", 0)),
+                "comments_count": int(session.get("comments_count", 0)),
+                "viewers_count": len(viewers_list),
+                "host": host_info,
+                "viewers": viewers_list,
+            }
+        )
+
+    return result
+
+
 def get_live_stats(live_id: str) -> Optional[dict]:
     live_data = get_live_session(live_id)
     if not live_data:
         return None
 
+    host_user_id = int(live_data.get("host_user_id", 0))
+    viewers = get_live_viewers_with_profiles(live_id)
+
+    host_map = _get_user_profiles_map([host_user_id])
+    host_info = host_map.get(
+        host_user_id,
+        {
+            "user_id": host_user_id,
+            "phone": "",
+            "username": f"user_{host_user_id}",
+            "full_name": "",
+            "avatar": None,
+        },
+    )
+
     return {
         "live_id": live_id,
         "status": live_data.get("status"),
-        "host_user_id": live_data.get("host_user_id"),
+        "host_user_id": host_user_id,
+        "host": host_info,
         "title": live_data.get("title"),
-        "started_at": live_data.get("started_at"),
-        "viewers_count": int(live_data.get("viewers_count", 0)),
+        "started_at": int(live_data.get("started_at", 0)) if live_data.get("started_at") else 0,
+        "viewers_count": len(viewers),
         "likes_count": int(live_data.get("likes_count", 0)),
         "comments_count": int(live_data.get("comments_count", 0)),
         "views": int(live_data.get("views", 0)),
+        "viewers": viewers,
     }
 
 
@@ -368,6 +525,7 @@ def end_live_session(live_id: str, requested_by_user_id: int) -> dict:
         _last_stats_broadcast_key(live_id),
         _user_active_live_key(host_user_id),
     )
+    pipe.srem(_active_livestreams_key(), live_id)
     pipe.execute()
 
     return {"ok": True, "detail": "Live tugatildi va Redisdan o‘chirildi."}

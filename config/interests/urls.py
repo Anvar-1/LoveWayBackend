@@ -5,4 +5,6 @@ urlpatterns = [
     path("search/", InterestSearchAPIView.as_view(), name="interest-search"),
     path("interests/search/", InterestSearchAPIView.as_view(), name="interest-search"),
     path("users/search/", UserSearchAPIView.as_view(), name="user-search"),
+    path('users/', UserSearchAPIView.as_view(), name='user-search'),
+    path('tags/', InterestSearchAPIView.as_view(), name='interest-list-search'),
 ]
