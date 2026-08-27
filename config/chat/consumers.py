@@ -1,8 +1,10 @@
+from django.utils import timezone
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
 
 from config.user.models import User
-from .models import ChatRoom
+from config.privacy.services import is_blocked_between
+from .models import ChatRoom, CallLog
 from .services import send_message, get_or_create_chat
 from .serializers import MessageSerializer
 
@@ -69,10 +71,22 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"error": "Invalid payload format. Must be a JSON object."})
             return
 
+        action = content.get("action") or content.get("type")
+
+        # ----------------------------------------------------
+        # Real-time WebRTC Call Signaling Actions
+        # ----------------------------------------------------
+        if action in ["call_offer", "call_answer", "ice_candidate", "call_reject", "call_end"]:
+            await self.handle_call_signal(action, content)
+            return
+
+        # ----------------------------------------------------
+        # Regular Chat Message
+        # ----------------------------------------------------
         text = content.get("message") or content.get("text")
 
         if not text or not str(text).strip():
-            await self.send_json({"error": "Message text cannot be empty."})
+            await self.send_json({"error": "Message text or valid call action cannot be empty."})
             return
 
         message_data = await self.save_message(str(text).strip())
@@ -94,6 +108,128 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json(
             event["message"]
         )
+
+    async def call_signal(self, event):
+
+        await self.send_json(event)
+
+    async def handle_call_signal(self, action, content):
+
+        partner_id = self.room.user2_id if self.user.id == self.room.user1_id else self.room.user1_id
+
+        # Check if users have blocked each other
+        blocked = await database_sync_to_async(is_blocked_between)(self.user.id, partner_id)
+        if blocked and action == "call_offer":
+            await self.send_json({
+                "action": "call_rejected",
+                "reason": "user_blocked",
+                "detail": "Cannot place call because user is blocked."
+            })
+            return
+
+        if action == "call_offer":
+            call_type = content.get("call_type", "audio")
+            call_log = await self.create_call_log(self.user.id, partner_id, self.room.id, call_type)
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    "type": "call_signal",
+                    "action": "call_offer",
+                    "caller_id": self.user.id,
+                    "caller_phone": self.user.phone,
+                    "call_type": call_type,
+                    "sdp": content.get("sdp"),
+                    "call_id": call_log.id if call_log else None,
+                    "room_id": self.room_id,
+                }
+            )
+
+        elif action == "call_answer":
+            call_id = content.get("call_id")
+            if call_id:
+                await self.update_call_log_status(call_id, "accepted")
+
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    "type": "call_signal",
+                    "action": "call_answer",
+                    "user_id": self.user.id,
+                    "call_id": call_id,
+                    "sdp": content.get("sdp"),
+                }
+            )
+
+        elif action == "ice_candidate":
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    "type": "call_signal",
+                    "action": "ice_candidate",
+                    "user_id": self.user.id,
+                    "candidate": content.get("candidate"),
+                }
+            )
+
+        elif action == "call_reject":
+            call_id = content.get("call_id")
+            if call_id:
+                await self.update_call_log_status(call_id, "rejected")
+
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    "type": "call_signal",
+                    "action": "call_rejected",
+                    "user_id": self.user.id,
+                    "call_id": call_id,
+                }
+            )
+
+        elif action == "call_end":
+            call_id = content.get("call_id")
+            duration = int(content.get("duration", 0))
+            if call_id:
+                await self.update_call_log_status(call_id, "ended", duration=duration)
+
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    "type": "call_signal",
+                    "action": "call_ended",
+                    "user_id": self.user.id,
+                    "call_id": call_id,
+                    "duration": duration,
+                }
+            )
+
+    @database_sync_to_async
+    def create_call_log(self, caller_id, receiver_id, room_id, call_type):
+        try:
+            return CallLog.objects.create(
+                caller_id=caller_id,
+                receiver_id=receiver_id,
+                room_id=room_id,
+                call_type=call_type,
+                status="missed",
+            )
+        except Exception as e:
+            print("CREATE CALL LOG ERROR:", e)
+            return None
+
+    @database_sync_to_async
+    def update_call_log_status(self, call_id, status, duration=0):
+        try:
+            call_log = CallLog.objects.filter(id=call_id).first()
+            if call_log:
+                call_log.status = status
+                if duration > 0:
+                    call_log.duration = duration
+                if status in ["ended", "rejected"]:
+                    call_log.ended_at = timezone.now()
+                call_log.save()
+        except Exception as e:
+            print("UPDATE CALL LOG ERROR:", e)
 
     @database_sync_to_async
     def get_or_resolve_room(self, identifier, user):

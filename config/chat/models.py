@@ -110,3 +110,46 @@ class MessageRead(models.Model):
             "message",
             "user",
         )
+
+
+class CallLog(models.Model):
+    CALL_TYPE_CHOICES = (
+        ("audio", "Audio Call"),
+        ("video", "Video Call"),
+    )
+    STATUS_CHOICES = (
+        ("missed", "Missed"),
+        ("accepted", "Accepted"),
+        ("rejected", "Rejected"),
+        ("ended", "Ended"),
+        ("busy", "Busy"),
+    )
+
+    caller = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="outgoing_calls",
+    )
+    receiver = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="incoming_calls",
+    )
+    room = models.ForeignKey(
+        ChatRoom,
+        on_delete=models.CASCADE,
+        related_name="call_logs",
+        null=True,
+        blank=True,
+    )
+    call_type = models.CharField(max_length=10, choices=CALL_TYPE_CHOICES, default="audio")
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default="missed")
+    duration = models.PositiveIntegerField(default=0)  # in seconds
+    started_at = models.DateTimeField(auto_now_add=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        return f"{self.call_type} call: {self.caller} -> {self.receiver} ({self.status})"

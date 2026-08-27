@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import (ChatRoom, Message)
+from .models import (ChatRoom, Message, CallLog)
 
 
 class UserShortSerializer(serializers.Serializer):
@@ -42,3 +42,28 @@ class MessageSerializer(serializers.ModelSerializer):
         model = Message
 
         fields = ["id", "room", "sender", "text", "created_at"]
+
+
+class CallLogSerializer(serializers.ModelSerializer):
+    caller = UserShortSerializer(read_only=True)
+    receiver = UserShortSerializer(read_only=True)
+
+    class Meta:
+        model = CallLog
+        fields = [
+            "id",
+            "room",
+            "caller",
+            "receiver",
+            "call_type",
+            "status",
+            "duration",
+            "started_at",
+            "ended_at",
+        ]
+
+
+class AgoraTokenRequestSerializer(serializers.Serializer):
+    channel_name = serializers.CharField(max_length=100)
+    uid = serializers.IntegerField(required=False, default=0)
+    role = serializers.ChoiceField(choices=["publisher", "subscriber"], default="publisher")
