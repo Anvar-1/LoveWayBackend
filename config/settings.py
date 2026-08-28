@@ -6,22 +6,23 @@ from decouple import config, Csv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-SECRET_KEY = config("SECRET_KEY")
-DEBUG = config("DEBUG", default=False, cast=bool)
+SECRET_KEY = 'django-insecure-szxhqr50jxkk-q%r3r&ea^-&vh$s5lgw&i9$k766ghr@o5=sgg'
 
-ALLOWED_HOSTS = config(
-    "ALLOWED_HOSTS",
-    default="127.0.0.1,localhost",
-    cast=Csv(),
-)
+DEBUG=True
+ALLOWED_HOSTS = [
+    'loveback.loveway.uz',
+    'www.loveback.loveway.uz',
+    '127.0.0.1',
+    'localhost',
+    '*',  
+]
 
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = config(
     "CORS_ALLOWED_ORIGINS",
-    default="http://localhost:3000,http://127.0.0.1:3000",
+    default="http://loveback.loveway.uz,https://loveback.loveway.uz,http://www.loveback.loveway.uz,https://www.loveback.loveway.uz,http://localhost:3000",
     cast=Csv(),
 )
-
 
 INSTALLED_APPS = [
     "daphne",
@@ -105,11 +106,11 @@ DATABASES = {
 # DATABASES = {
 #     "default": {
 #         "ENGINE": "django.db.backends.postgresql",
-#         "NAME": config("DB_NAME"),
-#         "USER": config("DB_USER"),
-#         "PASSWORD": config("DB_PASSWORD"),
-#         "HOST": config("DB_HOST", default="127.0.0.1"),
-#         "PORT": config("DB_PORT", default="5432"),
+#         "NAME": 'lovewaybackend',
+#         "USER": 'postgres',
+#         "PASSWORD": 'Qwerty123$',
+#         "HOST": 'localhost',
+#         "PORT": '5433',
 #         "OPTIONS": {
 #             "sslmode": config("DB_SSLMODE", default="disable"),
 #         },
@@ -130,11 +131,12 @@ TIME_ZONE = "Asia/Tashkent"
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "/static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
 
-MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+STATIC_URL = 'static/'
+MEDIA_URL = '/media/'
+STATICFILES_DIRS=["/home/lovewayu/loveback.loveway.uz/assets",]
+MEDIA_ROOT = '/home/lovewayu/loveback.loveway.uz/django/media'
+STATIC_ROOT = '/home/lovewayu/loveback.loveway.uz/django/static'
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -279,4 +281,12 @@ OPENAI_MODERATION_MODEL = config(
     default="omni-moderation-latest",
 )
 
-# Debug uchun vaqtincha tekshiruv
+
+
+
+
+
+
+
+
+
